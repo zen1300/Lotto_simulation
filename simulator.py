@@ -1,6 +1,9 @@
 import random
 import pandas as pd
-import plotly
+import numpy as np
+from plotly.subplots import make_subplots
+import plotly.figure_factory as ff
+import plotly.graph_objects as go
 
 
 class Lotto:
@@ -71,10 +74,68 @@ class Lotto:
                 return 2_000_000
         return winnings
 
+    @staticmethod
+    def _create_histogram(data, **kwargs):
+        """
+        Create and return a histogram graph object that can be added to a plotly Figure or subplot.
+        :param data: Array of data to calculate histogram.
+        :type data: list
+        :param kwargs: Any plotly go.Histogram() kwargs
+        :type kwargs:
+        :return: A plotly go.Histogram()
+        :rtype: object
+        """
+        fig = go.Histogram(
+            x=data,
+            **kwargs
+        )
+        return fig
+
+    @staticmethod
+    def _create_scatter(x, y, **kwargs):
+        """
+        Create and return a scatter graph object that can be added to a plotly Figure or subplot.
+        :param x: Array of x data.
+        :type x: list
+        :param y: Array of y data
+        :type y: list
+        :param kwargs: Any plotly go.Scatter() kwargs
+        :type kwargs:
+        :return: A plotly go.Scatter()
+        :rtype: object
+        """
+        fig = go.Scatter(
+            x=x,
+            y=y,
+            mode='lines',
+            **kwargs
+        )
+        return fig
+
+    @staticmethod
+    def _create_waterfall(x, y, **kwargs):
+        """
+        Create and return a waterfall graph object that can be added to a plotly Figure or subplot.
+        :param x: Array of x data
+        :type x: list
+        :param y: Array of relative change of y data
+        :type y: list
+        :param kwargs: Any plotly go.Waterfall() kwargs
+        :type kwargs:
+        :return: A plotly go.Waterfall()
+        :rtype: object
+        """
+        fig = go.Waterfall(
+            x=x,
+            y=y,
+            **kwargs
+        )
+        return fig
+
     def _draw(self, jackpot):
         """
         Simulates a random draw of 5 normal lotto balls, 1 powerball, and 1 powerplay multiplier. Note: powerplay
-        multiplier of x10 is only available for jackpots <= 150,000,000.
+        multiplier of x10 is only available for jackpots < 150,000,000.
         :param jackpot: Amount of current jackpot. Used to set powerplay multiplier options.
         :type jackpot: int
         :return: Individual lists of chosen lotto balls, powerplay ball, and powerplay multiplier.
@@ -85,28 +146,41 @@ class Lotto:
         if jackpot >= 150_000_000:
             powerplay = random.sample(self._powerplays, 1)
         else:
-            # x10 powerplay is only for jackpots > 150,000,000
+            # x10 powerplay is only for jackpots < 150,000,000
             _powerplays = (2, 3, 4, 5)
             powerplay = random.sample(_powerplays, 1)
 
         return balls, powerball, powerplay
 
+    def calc_profit(self):
+        """
+        Calculate and return the running cumulative sum of profits for each play.
+        :return: The cumulative sum of profits for each play
+        :rtype: list
+        """
+        spent = np.negative(self.spent)
+        won = np.asarray(self.winnings)
+        profit = spent + won
+        return profit
+
+    def _get_all_balls(self):
+        """
+        Return a merged list of all individual lotto balls drawn.
+        :return: List of all lotto balls drawn.
+        :rtype: list
+        """
+        return self.chosen_ball1 + self.chosen_ball2 + self.chosen_ball3 + self.chosen_ball4 + self.chosen_ball5
+
     def run(self, jackpot=150_000_000, add_powerplay=False, num_plays=5000):
         """
         Run a simulated powerball drawing. Simulates a unique drawing for every play in num_plays.
         For every play, will update the following properties with the results:
-
-            Lotto.plays = Number total plays.
-
-            Lotto.spent = List of cost of each play.
-
-            Lotto.winnings = List of winnings of each play.
-
-            Lotto.chosen_ball(1-5) = List of the selected number for the ball position (1-5) of each play.
-
-            Lotto.chosen_powerball = List of the selected powerball of each play.
-
-            Lotto.chosen_powerplay = List of the selected powerplay of each play.
+            - Lotto.plays = Number total plays.
+            - Lotto.spent = List of cost of each play.
+            - Lotto.winnings = List of winnings of each play.
+            - Lotto.chosen_ball(1-5) = List of the selected number for the ball position (1-5) of each play.
+            - Lotto.chosen_powerball = List of the selected powerball of each play.
+            - Lotto.chosen_powerplay = List of the selected powerplay of each play.
         :param jackpot: Value of jackpot.
         :type jackpot: int
         :param add_powerplay: Whether to add a powerplay option or not.
@@ -169,4 +243,64 @@ class Lotto:
         df.to_csv(file_path, index=False)
 
     def view_results(self):
-        pass
+        """
+        View the results of all lotto plays.
+
+        Creates graphs for:
+            - Distribution of lottery balls selected.
+            - Distribution of powerballs selected.
+            - Scatters of money spent and won.
+            - Waterfall graph of cumulative profit per play.
+        """
+        # set up subplots to add plots to
+        fig = make_subplots(
+            rows=2,
+            cols=2,
+            subplot_titles=[
+                'Lottery Ball Distribution',
+                'Powerball Distribution',
+                'Money Spent vs Won',
+                'Profit'
+            ]
+        )
+
+        # create and add distribution graph for lotto balls chosen
+        all_balls = self._get_all_balls()
+        ball_dist = self._create_histogram(all_balls, name='Lottery Balls', histnorm='probability')
+        fig.add_trace(ball_dist, row=1, col=1)
+
+        # create and add distribution graph for powerballs chosen
+        powerball_dist = self._create_histogram(self.chosen_powerball, name='Powerballs', histnorm='probability')
+        fig.add_trace(powerball_dist, row=1, col=2)
+
+        # create and add scatter plot for the cumulative money spent
+        timeframe = [i for i in range(1, self.plays + 1)]
+        spent = np.cumsum(self.spent)
+        cost_scatter = self._create_scatter(
+            x=timeframe,
+            y=spent,
+            name='Money Spent'
+        )
+        fig.add_trace(cost_scatter, row=2, col=1)
+
+        # create and add scatter plot for the cumulative money won
+        # add to same row and col to combine graphs
+        won = np.cumsum(self.winnings)
+        won_scatter = self._create_scatter(
+            x=timeframe,
+            y=won,
+            name='Money Won'
+        )
+        fig.add_trace(won_scatter, row=2, col=1)
+
+        # create and add waterfall graph for the cumulative profit
+        profit = self.calc_profit()
+        cost_waterfall = self._create_waterfall(x=timeframe, y=profit)
+        fig.add_trace(cost_waterfall, row=2, col=2)
+
+        # style subplot figure
+        fig.update_layout(
+            template='plotly_dark',
+            showlegend=False
+        )
+        fig.show()
