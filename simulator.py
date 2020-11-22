@@ -1,9 +1,10 @@
 import random
-import pandas as pd
+
 import numpy as np
-from plotly.subplots import make_subplots
-import plotly.figure_factory as ff
+import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from scipy.interpolate import interp1d
 
 
 class Lotto:
@@ -26,6 +27,7 @@ class Lotto:
 
         sim.view_results()
     """
+
     def __init__(self):
         self._balls = tuple(i for i in range(1, 70))
         self._powerball = tuple(i for i in range(1, 27))
@@ -46,6 +48,7 @@ class Lotto:
         self.plays = 0
         self.spent = []
         self.winnings = []
+        self.net_profit = 0
         self.chosen_ball1 = []
         self.chosen_ball2 = []
         self.chosen_ball3 = []
@@ -55,38 +58,18 @@ class Lotto:
         self.chosen_powerplay = []
 
     @staticmethod
-    def _multiply_powerplay(winnings, powerplay):
-        """
-        Return the updated winnings after applying the powerplay. Per powerball rules, if base prize was 1,000,000,
-        then the maximum powerplay prize is 2,000,000 regardless of actual multiplier. If no powerplay was added
-        (powerplay = 0), then will return base winnings.
-        :param winnings: Value of base powerball winnings.
-        :type winnings: int
-        :param powerplay: Chosen powerplay multiplier.
-        :type powerplay: int
-        :return: Winnings * powerplay except for 1,000,000 prize which instead returns 2,000,000.
-        :rtype: int
-        """
-        if powerplay > 0:
-            if winnings < 1_000_000:
-                return winnings * powerplay
-            else:
-                return 2_000_000
-        return winnings
-
-    @staticmethod
-    def _create_histogram(data, **kwargs):
+    def _create_histogram(x, **kwargs):
         """
         Create and return a histogram graph object that can be added to a plotly Figure or subplot.
-        :param data: Array of data to calculate histogram.
-        :type data: list
+        :param x: Array of data to calculate histogram.
+        :type x: list
         :param kwargs: Any plotly go.Histogram() kwargs
         :type kwargs:
         :return: A plotly go.Histogram()
         :rtype: object
         """
         fig = go.Histogram(
-            x=data,
+            x=x,
             **kwargs
         )
         return fig
@@ -132,6 +115,60 @@ class Lotto:
         )
         return fig
 
+    @staticmethod
+    def _multiply_powerplay(winnings, powerplay):
+        """
+        Return the updated winnings after applying the powerplay. Per powerball rules, if base prize was 1,000,000,
+        then the maximum powerplay prize is 2,000,000 regardless of actual multiplier. If no powerplay was added
+        (powerplay = 0), then will return base winnings.
+        :param winnings: Value of base powerball winnings.
+        :type winnings: int
+        :param powerplay: Chosen powerplay multiplier.
+        :type powerplay: int
+        :return: Winnings * powerplay except for 1,000,000 prize which instead returns 2,000,000.
+        :rtype: int
+        """
+        if powerplay > 0:
+            if winnings < 1_000_000:
+                return winnings * powerplay
+            else:
+                return 2_000_000
+        return winnings
+
+    @staticmethod
+    def _smooth_fit(x_values, y_values, interpolation='linear', points=5_000):
+        """
+        Perform and return interpolation of x_values and y_values. Useful for graphing to help increase performance by
+        limiting number of points.
+        :param x_values: Original list of x values.
+        :type x_values: list or numpy.ndarray
+        :param y_values: Original list of y values.
+        :type y_values: list or numpy.ndarray
+        :param interpolation: Type of interpolation to perform. Options from scipy.interpolation.interp1d:
+            ‘linear’, ‘nearest’, ‘zero’, ‘slinear’, ‘quadratic’, ‘cubic’, ‘previous’, ‘next’.
+            Defaults to linear.
+        :type interpolation: str
+        :param points: Number of points to return for interpolated values. Defaults to 5,000
+        :type points: int
+        :return: Interpolated x and y of ('x_values', 'y_values') by 'interpolation' with size 'points'.
+        :rtype: (numpy.ndarray, numpy.ndarray)
+        """
+        interp = interp1d(x_values, y_values, kind=interpolation)
+        x_points = np.linspace(min(x_values), max(x_values), points)
+        y_fit = interp(x_points)
+        return x_points, y_fit
+
+    def _calc_profit(self):
+        """
+        Calculate and return the running cumulative sum of profits for each play.
+        :return: The cumulative sum of profits for each play
+        :rtype: numpy.ndarray
+        """
+        spent = np.negative(self.spent)
+        won = np.asarray(self.winnings)
+        profit = spent + won
+        return profit
+
     def _draw(self, jackpot):
         """
         Simulates a random draw of 5 normal lotto balls, 1 powerball, and 1 powerplay multiplier. Note: powerplay
@@ -152,17 +189,6 @@ class Lotto:
 
         return balls, powerball, powerplay
 
-    def calc_profit(self):
-        """
-        Calculate and return the running cumulative sum of profits for each play.
-        :return: The cumulative sum of profits for each play
-        :rtype: list
-        """
-        spent = np.negative(self.spent)
-        won = np.asarray(self.winnings)
-        profit = spent + won
-        return profit
-
     def _get_all_balls(self):
         """
         Return a merged list of all individual lotto balls drawn.
@@ -170,6 +196,30 @@ class Lotto:
         :rtype: list
         """
         return self.chosen_ball1 + self.chosen_ball2 + self.chosen_ball3 + self.chosen_ball4 + self.chosen_ball5
+
+    def _get_df(self):
+        """
+        Convert and return lotto results in form of pandas DataFrame.
+
+        Columns:
+            Ticket Number, Money Spent, Money Won, Ball 1, Ball 2, Ball 3, Ball 4, Ball 5, Powerball, Powerplay
+        :return: Pandas DataFrame containing results for each play.
+        :rtype: pandas.DataFrame
+        """
+        data = {
+            'Ticket Number': [i for i in range(1, self.plays + 1)],
+            'Money Spent': self.spent,
+            'Money Won': self.winnings,
+            'Ball 1': self.chosen_ball1,
+            'Ball 2': self.chosen_ball2,
+            'Ball 3': self.chosen_ball3,
+            'Ball 4': self.chosen_ball4,
+            'Ball 5': self.chosen_ball5,
+            'Powerball': self.chosen_powerball,
+            'Powerplay': self.chosen_powerplay
+        }
+        df = pd.DataFrame(data)
+        return df
 
     def run(self, jackpot=150_000_000, add_powerplay=False, num_plays=5000):
         """
@@ -220,6 +270,7 @@ class Lotto:
                 if add_powerplay:
                     winnings = self._multiply_powerplay(winnings, powerplay[0])
             self.winnings.append(winnings)
+        self.net_profit = np.sum(self._calc_profit())
 
     def export_results(self, file_path):
         """
@@ -227,22 +278,10 @@ class Lotto:
         :param file_path: File path of output file.
         :type file_path: str
         """
-        data = {
-            'Ticket Number': [i for i in range(1, self.plays + 1)],
-            'Money Spent': self.spent,
-            'Money Won': self.winnings,
-            'Ball 1': self.chosen_ball1,
-            'Ball 2': self.chosen_ball2,
-            'Ball 3': self.chosen_ball3,
-            'Ball 4': self.chosen_ball4,
-            'Ball 5': self.chosen_ball5,
-            'Powerball': self.chosen_powerball,
-            'Powerplay': self.chosen_powerplay
-        }
-        df = pd.DataFrame(data)
+        df = self._get_df()
         df.to_csv(file_path, index=False)
 
-    def view_results(self):
+    def view_results(self, max_points=5_000):
         """
         View the results of all lotto plays.
 
@@ -251,6 +290,10 @@ class Lotto:
             - Distribution of powerballs selected.
             - Scatters of money spent and won.
             - Waterfall graph of cumulative profit per play.
+        :param max_points: Maximum number of points to graph. A large number of points will cause slow performance.
+            If # of plays > max_points, will interpolate results down to max_points. As such, the general trends of the
+            graphs may be accurate, but the exact play-specific data may not.
+        :type max_points: int
         """
         # set up subplots to add plots to
         fig = make_subplots(
@@ -276,9 +319,13 @@ class Lotto:
         # create and add scatter plot for the cumulative money spent
         timeframe = [i for i in range(1, self.plays + 1)]
         spent = np.cumsum(self.spent)
+        if len(spent) > max_points:
+            x, y = self._smooth_fit(timeframe, spent, points=max_points)
+        else:
+            x, y = timeframe, spent
         cost_scatter = self._create_scatter(
-            x=timeframe,
-            y=spent,
+            x=x,
+            y=y,
             name='Money Spent'
         )
         fig.add_trace(cost_scatter, row=2, col=1)
@@ -286,17 +333,29 @@ class Lotto:
         # create and add scatter plot for the cumulative money won
         # add to same row and col to combine graphs
         won = np.cumsum(self.winnings)
+        if len(won) > max_points:
+            x, y = self._smooth_fit(timeframe, won, points=max_points)
+        else:
+            x, y = timeframe, won
         won_scatter = self._create_scatter(
-            x=timeframe,
-            y=won,
+            x=x,
+            y=y,
             name='Money Won'
         )
         fig.add_trace(won_scatter, row=2, col=1)
 
         # create and add waterfall graph for the cumulative profit
-        profit = self.calc_profit()
-        cost_waterfall = self._create_waterfall(x=timeframe, y=profit)
-        fig.add_trace(cost_waterfall, row=2, col=2)
+        profit = self._calc_profit()
+        if len(profit) > max_points:
+            x, y = self._smooth_fit(timeframe, profit, points=max_points)
+            print(len(x), len(y), len(profit))
+        else:
+            x, y = timeframe, profit
+        profit_waterfall = self._create_waterfall(
+            x=x,
+            y=y
+        )
+        fig.add_trace(profit_waterfall, row=2, col=2)
 
         # style subplot figure
         fig.update_layout(
@@ -304,3 +363,9 @@ class Lotto:
             showlegend=False
         )
         fig.show()
+
+
+if __name__ == '__main__':
+    sim = Lotto()
+    sim.run(jackpot=250_000_000, add_powerplay=True, num_plays=1_000_000)
+    sim.export_results('results.csv')
